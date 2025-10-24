@@ -3,16 +3,27 @@
 # ========================================
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from groq import Groq
 import os
+import sys
+
+# Logging inicial
+print("=" * 50, file=sys.stderr)
+print("CMELP Backend Starting...", file=sys.stderr)
+print(f"PORT: {os.environ.get('PORT', 'NOT SET')}", file=sys.stderr)
+print(f"GROQ_API_KEY: {'SET ✓' if os.environ.get('GROQ_API_KEY') else 'NOT SET ✗'}", file=sys.stderr)
+print("=" * 50, file=sys.stderr)
 
 app = Flask(__name__)
 CORS(app)
 
-# Inicializar Groq (GRATUITO!)
-client = Groq(
-    api_key=os.environ.get("GROQ_API_KEY")
-)
+# Inicializar Groq com tratamento de erro
+try:
+    from groq import Groq
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    print("✓ Groq client initialized successfully", file=sys.stderr)
+except Exception as e:
+    print(f"✗ Error initializing Groq: {e}", file=sys.stderr)
+    client = None
 
 # Base de conhecimento CMELP
 CMELP_KNOWLEDGE = """
@@ -94,6 +105,7 @@ conversations = {}
 
 @app.route('/')
 def home():
+    print(">>> Route / accessed", file=sys.stderr)
     return jsonify({
         'status': 'online',
         'service': 'CMELP AI Assistant',
@@ -104,10 +116,13 @@ def home():
 
 @app.route('/health')
 def health():
+    print(">>> Route /health accessed", file=sys.stderr)
     return jsonify({'status': 'healthy'})
 
 @app.route('/chat', methods=['POST', 'OPTIONS'])
 def chat():
+    print(">>> Route /chat accessed", file=sys.stderr)
+    
     # Handle CORS preflight
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
@@ -116,11 +131,20 @@ def chat():
         response.headers.add('Access-Control-Allow-Methods', 'POST')
         return response
     
+    # Verificar se Groq está disponível
+    if client is None:
+        print("✗ Groq client not available", file=sys.stderr)
+        return jsonify({
+            'error': 'Groq client not initialized. Check GROQ_API_KEY.'
+        }), 500
+    
     try:
         data = request.json
         user_message = data.get('message', '')
         session_id = data.get('session_id', 'default')
         context = data.get('context', {})
+        
+        print(f"User message: {user_message[:50]}...", file=sys.stderr)
         
         if not user_message:
             return jsonify({'error': 'Mensagem vazia'}), 400
@@ -144,6 +168,8 @@ def chat():
             {"role": "system", "content": SYSTEM_PROMPT}
         ] + conversations[session_id]
         
+        print("Calling Groq API...", file=sys.stderr)
+        
         # Chamar Groq API (GRATUITA!)
         completion = client.chat.completions.create(
             model="mixtral-8x7b-32768",  # Excelente modelo, grátis!
@@ -156,6 +182,8 @@ def chat():
         
         # Extrair resposta
         assistant_message = completion.choices[0].message.content
+        
+        print(f"Response received: {len(assistant_message)} chars", file=sys.stderr)
         
         # Adicionar ao histórico
         conversations[session_id].append({
@@ -173,7 +201,9 @@ def chat():
         })
     
     except Exception as e:
-        print(f"Erro: {str(e)}")
+        print(f"✗ Error in /chat: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return jsonify({
             'error': 'Erro ao processar mensagem',
             'details': str(e)
@@ -181,6 +211,7 @@ def chat():
 
 @app.route('/clear-history', methods=['POST'])
 def clear_history():
+    print(">>> Route /clear-history accessed", file=sys.stderr)
     data = request.json
     session_id = data.get('session_id', 'default')
     
@@ -191,6 +222,5 @@ def clear_history():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
-
+    print(f"Starting Flask on port {port}...", file=sys.stderr)
+    app.run(host='0.0.0.0', port=port, debug=False)
